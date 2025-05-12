@@ -219,13 +219,15 @@ export default class FitSettingTab extends PluginSettingTab {
 		this.keySetting = new Setting(containerEl)
 			.setName('Encryption private key')
 			.setDesc('Enter the key that will be responsible for encrypting files on GitHub. Use this key in each vault you want to sync.')
-			.addText(text => text
-				.setPlaceholder('Encryption private key')
-				.setValue(this.plugin.settings.key)
-				.onChange(async (value) => {
-					this.plugin.settings.key = value;
-					await this.plugin.saveSettings();
-				}))
+			.addText(text => {
+				text.inputEl.type = "password";
+				text.setPlaceholder('Encryption private key')
+					.setValue(this.plugin.settings.key)
+					.onChange(async (value) => {
+						this.plugin.settings.key = value;
+						await this.plugin.saveSettings();
+					})
+			})
 
 		new Setting(containerEl)
 			.setName('Clear cache')
