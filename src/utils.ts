@@ -43,27 +43,14 @@ export function compareSha<Env extends "remote" | "local">(
                     path,
                     status: status as Env extends "local" ? LocalFileStatus : RemoteChangeType,
                     currentSha: currentSha ?? undefined,
-                    extension: extractExtension(path)
                 }];
             }
             return [];
         });
 }
 
-export const RECOGNIZED_BINARY_EXT = ["png", "jpg", "jpeg", "pdf"]
-
 export function extractExtension(path: string): string | undefined {
     return path.match(/[^.]+$/)?.[0];
-}
-
-// Using file extension to determine encoding of files (works in most cases)
-export function getFileEncoding(path: string): string {
-    const extension = path.match(/[^.]+$/)?.[0];
-    const isBinary = extension && RECOGNIZED_BINARY_EXT.includes(extension);
-    if (isBinary) {
-        return "base64"
-    } 
-    return "utf-8"
 }
 
 export function setEqual<T>(arr1: Array<T>, arr2: Array<T>) {

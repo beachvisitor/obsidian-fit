@@ -4,7 +4,6 @@ export type RemoteChangeType = "ADDED" | "MODIFIED" | "REMOVED"
 export type LocalChange = {
     path: string,
     status: LocalFileStatus,
-    extension? : string
 }
 
 export type LocalUpdate = {

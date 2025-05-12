@@ -1,11 +1,10 @@
-import { LocalStores, FitSettings } from "main"
-import { Octokit } from "@octokit/core"
-import { RECOGNIZED_BINARY_EXT, compareSha } from "./utils"
-import { VaultOperations } from "./vaultOps"
-import { LocalChange, LocalFileStatus, RemoteChange, RemoteChangeType } from "./fitTypes"
-import { arrayBufferToBase64 } from "obsidian"
-
-
+import {FitSettings, LocalStores} from "main"
+import {Octokit} from "@octokit/core"
+import {compareSha} from "./utils"
+import {VaultOperations} from "./vaultOps"
+import {LocalChange, LocalFileStatus, RemoteChange, RemoteChangeType} from "./fitTypes"
+import {arrayBufferToBase64} from "obsidian"
+import Encryption from "./encryption";
 
 export type TreeNode = {
     path: string, 
@@ -21,7 +20,7 @@ type OctokitCallMethods = {
     getCommitTreeSha: (ref: string) => Promise<string>
     getRemoteTreeSha: (tree_sha: string) => Promise<{[k:string]: string}>
     createBlob: (content: string, encoding: string) =>Promise<string>
-    createTreeNodeFromFile: ({path, status, extension}: LocalChange, remoteTree: TreeNode[]) => Promise<TreeNode|null>
+    createTreeNodeFromFile: ({path, status}: LocalChange, remoteTree: TreeNode[]) => Promise<TreeNode|null>
     createCommit: (treeSha: string, parentSha: string) =>Promise<string>
     updateRef: (sha: string, ref: string) => Promise<string>
     getBlob: (file_sha:string) =>Promise<string>
@@ -66,11 +65,12 @@ export class Fit implements IFit {
 	lastFetchedRemoteSha: Record<string, string>
     octokit: Octokit
     vaultOps: VaultOperations
+    encryption: Encryption
 
-
-    constructor(setting: FitSettings, localStores: LocalStores, vaultOps: VaultOperations) {
+    constructor(setting: FitSettings, localStores: LocalStores, vaultOps: VaultOperations, encryption: Encryption) {
         this.loadSettings(setting)
         this.loadLocalStore(localStores)
+		this.encryption = encryption;
         this.vaultOps = vaultOps
         this.headers = {
             // Hack to disable caching which leads to inconsistency for
@@ -104,14 +104,8 @@ export class Fit implements IFit {
 
     async computeFileLocalSha(path: string): Promise<string> {
         // Note: only support TFile now, investigate need for supporting TFolder later on
-        const file = await this.vaultOps.getTFile(path) 
-		// compute sha1 based on path and file content
-        let content: string;
-        if (RECOGNIZED_BINARY_EXT.includes(file.extension)) {
-            content = arrayBufferToBase64(await this.vaultOps.vault.readBinary(file))
-        } else {
-            content = await this.vaultOps.vault.read(file)
-        }
+        const file = await this.vaultOps.getTFile(path)
+		const content = arrayBufferToBase64(await this.vaultOps.vault.readBinary(file))
 		return await this.fileSha1(path + content)
 	}
 
@@ -269,7 +263,15 @@ export class Fit implements IFit {
             recursive: 'true',
             headers: this.headers
         })
-        return tree.tree as TreeNode[]
+		const arr = tree.tree as TreeNode[];
+		for (const node of arr) {
+			try {
+				node.path = await this.encryption.decryptPath(node.path);
+			} catch (e) {
+				console.error('Path decryption failed, skipping', e);
+			}
+		}
+        return arr;
     }
 
     // get the remote tree sha in the format compatible with local store
@@ -292,19 +294,20 @@ export class Fit implements IFit {
     }
 
     async createBlob(content: string, encoding: string): Promise<string> {
+		const encrypted = await this.encryption.encrypt(content);
         const {data: blob} = await this.octokit.request(
             `POST /repos/{owner}/{repo}/git/blobs`, {
             owner: this.owner,
             repo: this.repo,
-            content, 
+			content: encrypted,
             encoding,
-            headers: this.headers     
+            headers: this.headers
         })
         return blob.sha
     }
 
 
-    async createTreeNodeFromFile({path, status, extension}: LocalChange, remoteTree: Array<TreeNode>): Promise<TreeNode|null> {
+    async createTreeNodeFromFile({path, status}: LocalChange, remoteTree: Array<TreeNode>): Promise<TreeNode|null> {
 		if (status === "deleted") {
             // skip creating deletion node if file not found on remote
             if (remoteTree.every(node => node.path !== path)) {
@@ -318,23 +321,17 @@ export class Fit implements IFit {
 			}
 		}
         const file = await this.vaultOps.getTFile(path)
-		let encoding: string;
-		let content: string 
-        // TODO check whether every files including md can be read using readBinary to reduce code complexity
-		if (extension && RECOGNIZED_BINARY_EXT.includes(extension)) {
-			encoding = "base64"
-
-			const fileArrayBuf = await this.vaultOps.vault.readBinary(file)
-			const uint8Array = new Uint8Array(fileArrayBuf);
-			let binaryString = '';
-			for (let i = 0; i < uint8Array.length; i++) {
-				binaryString += String.fromCharCode(uint8Array[i]);
-			}
-			content = btoa(binaryString);
-		} else {
-			encoding = 'utf-8'
-			content = await this.vaultOps.vault.read(file)
+		const fileArrayBuf = await this.vaultOps.vault.readBinary(file);
+		const uint8Array = new Uint8Array(fileArrayBuf);
+		let binaryString = '';
+		for (let i = 0; i < uint8Array.length; i++) {
+			binaryString += String.fromCharCode(uint8Array[i]);
 		}
+
+		const content = btoa(binaryString);
+		const encoding = 'base64';
+		// const encoding = 'utf-8';
+
 		const blobSha = await this.createBlob(content, encoding)
         // skip creating node if file found on remote is the same as the created blob
         if (remoteTree.some(node => node.path === path && node.sha === blobSha)) {
@@ -352,6 +349,9 @@ export class Fit implements IFit {
         treeNodes: Array<TreeNode>,
         base_tree_sha: string): 
         Promise<string> {
+			for (const node of treeNodes) {
+				node.path = await this.encryption.encryptPath(node.path);
+			}
             const {data: newTree} = await this.octokit.request(
                 `POST /repos/{owner}/{repo}/git/trees`, 
                 {
@@ -392,13 +392,19 @@ export class Fit implements IFit {
     }
 
     async getBlob(file_sha:string): Promise<string> {
-        const { data: blob } = await this.octokit.request(
+        const res = await this.octokit.request(
             `GET /repos/{owner}/{repo}/git/blobs/{file_sha}`, {
             owner: this.owner,
             repo: this.repo,
             file_sha,
             headers: this.headers
         })
-        return blob.content
+		try {
+			const data = res.data.content.replace(/\n/g, '');
+			return await this.encryption.decrypt(data);
+		} catch (e) {
+			console.error('Decryption failed, skipping', e);
+			return res.data.content;
+		}
     }
 }

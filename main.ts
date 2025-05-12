@@ -5,8 +5,10 @@ import FitSettingTab from 'src/fitSetting';
 import { FitSync } from 'src/fitSync';
 import { showFileOpsRecord, showUnappliedConflicts } from 'src/utils';
 import { VaultOperations } from 'src/vaultOps';
+import Encryption from "./src/encryption";
 
 export interface FitSettings {
+	key: string;
 	pat: string;
 	owner: string;
 	avatarUrl: string;
@@ -20,6 +22,7 @@ export interface FitSettings {
 }
 
 const DEFAULT_SETTINGS: FitSettings = {
+	key: "",
 	pat: "",
 	owner: "",
 	avatarUrl: "",
@@ -47,6 +50,7 @@ const DEFAULT_LOCAL_STORE: LocalStores = {
 
 
 export default class FitPlugin extends Plugin {
+	encryption: Encryption;
 	settings: FitSettings;
 	settingTab: FitSettingTab
 	localStore: LocalStores
@@ -76,17 +80,20 @@ export default class FitPlugin extends Plugin {
 
 	checkSettingsConfigured(): boolean {
 		const actionItems: Array<string> = []
-		if (this.settings.pat === "") {
-			actionItems.push("provide GitHub personal access token")
-		}
-		if (this.settings.owner === "") {
-			actionItems.push("authenticate with personal access token")
-		}
-		if (this.settings.repo === "") {
-			actionItems.push("select a repository to sync to")
-		}
-		if (this.settings.branch === "") {
-			actionItems.push("select a branch to sync to")	
+		const checks: { [K in keyof FitSettings]?: string } = {
+			key: "provide encryption private key",
+			pat: "provide GitHub personal access token",
+			owner: "authenticate with personal access token",
+			repo: "select a repository to sync to",
+			branch: "select a branch to sync to",
+		};
+
+		for (const key in checks) {
+			const k = key as keyof FitSettings;
+			const message = checks[k];
+			if (message && this.settings[k] === "") {
+				actionItems.push(message);
+			}
 		}
 
 		if (actionItems.length > 0) {
@@ -154,14 +161,18 @@ export default class FitPlugin extends Plugin {
 				return true
 			}
 			console.error("Caught unknown error: ", error)
-			notice.setMessage("Unable to sync, if you are not connected to the internet, turn off auto sync.", true)
+			const e = error.message ? `Error: ${error.message}` : '';
+			notice.setMessage(
+				`Unable to sync, if you are not connected to the internet, turn off auto sync. ${e}`,
+				true
+			)
 			return true
 		}
 	}
 
 	loadRibbonIcons() {
 		// Pull from remote then Push to remote if no clashing changes detected during pull
-		this.fitSyncRibbonIconEl = this.addRibbonIcon('github', 'Fit Sync', async (evt: MouseEvent) => {
+		this.fitSyncRibbonIconEl = this.addRibbonIcon('github', 'Sync', async (evt: MouseEvent) => {
 			if ( this.syncing || this.autoSyncing ) { return }
 			this.syncing = true
 			this.fitSyncRibbonIconEl.addClass('animate-icon');
@@ -230,8 +241,9 @@ export default class FitPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 		await this.loadLocalStore();
+		this.encryption = new Encryption(this)
 		this.vaultOps = new VaultOperations(this.app.vault)
-		this.fit = new Fit(this.settings, this.localStore, this.vaultOps)
+		this.fit = new Fit(this.settings, this.localStore, this.vaultOps, this.encryption)
 		this.fitSync = new FitSync(this.fit, this.vaultOps, this.saveLocalStoreCallback)
 		this.syncing = false
 		this.autoSyncing = false

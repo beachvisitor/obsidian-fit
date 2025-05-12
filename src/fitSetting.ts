@@ -2,6 +2,7 @@ import FitPlugin from "main";
 import { App, PluginSettingTab, Setting } from "obsidian";
 import { setEqual } from "./utils";
 import { warn } from "console";
+import FitNotice from "./fitNotice";
 
 type RefreshCheckPoint = "repo(0)" | "branch(1)" | "link(2)" | "initialize" | "withCache"
 
@@ -11,6 +12,7 @@ export default class FitSettingTab extends PluginSettingTab {
 	authUserAvatar: HTMLDivElement;
 	authUserHandle: HTMLSpanElement;
 	patSetting: Setting
+	keySetting: Setting
 	ownerSetting: Setting
 	repoSetting: Setting
 	branchSetting: Setting
@@ -213,6 +215,33 @@ export default class FitSettingTab extends PluginSettingTab {
 					this.plugin.settings.deviceName = value;
 					await this.plugin.saveSettings();
 				}));
+
+		this.keySetting = new Setting(containerEl)
+			.setName('Encryption private key')
+			.setDesc('Enter the key that will be responsible for encrypting files on GitHub. Use this key in each vault you want to sync.')
+			.addText(text => text
+				.setPlaceholder('Encryption private key')
+				.setValue(this.plugin.settings.key)
+				.onChange(async (value) => {
+					this.plugin.settings.key = value;
+					await this.plugin.saveSettings();
+				}))
+
+		new Setting(containerEl)
+			.setName('Clear cache')
+			.setDesc("The local cache may no longer be relevant, so you can clear it.")
+			.addExtraButton(button => button
+				.setIcon('trash-2')
+				.setTooltip("Clear cache")
+				.onClick(async () => {
+					await this.plugin.loadLocalStore();
+					this.plugin.localStore.localSha = {}
+					this.plugin.localStore.lastFetchedCommitSha = ''
+					this.plugin.localStore.lastFetchedRemoteSha = {}
+					await this.plugin.saveLocalStore();
+					const notice = new FitNotice(this.plugin.fit, [], "Successfully cleared!");
+					notice.remove();
+				}))
 
 				
 		new Setting(containerEl)

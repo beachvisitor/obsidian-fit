@@ -1,7 +1,7 @@
 import { arrayBufferToBase64 } from "obsidian"
 import { Fit } from "./fit"
 import { ClashStatus, ConflictReport, ConflictResolutionResult, FileOpRecord, LocalChange, LocalUpdate, RemoteChange, RemoteUpdate } from "./fitTypes"
-import { RECOGNIZED_BINARY_EXT, extractExtension, removeLineEndingsFromBase64String } from "./utils"
+import { removeLineEndingsFromBase64String } from "./utils"
 import { FitPull } from "./fitPull"
 import { FitPush } from "./fitPush"
 import { VaultOperations } from "./vaultOps"
@@ -85,43 +85,11 @@ export class FitSync implements IFitSync {
     }
 
     generateConflictReport(path: string, localContent: string, remoteContent: string): ConflictReport {
-        const detectedExtension = extractExtension(path)
-        if (detectedExtension && RECOGNIZED_BINARY_EXT.includes(detectedExtension)) {
-            return {
-                path,
-                resolutionStrategy: "binary",
-                remoteContent
-            }
-        }
-        // assume file encoding is utf8 if extension is not known
         return {
             path,
             resolutionStrategy: "utf-8",
             localContent,
             remoteContent,
-        }
-    }
-
-    async handleBinaryConflict(path: string, remoteContent: string): Promise<FileOpRecord> {
-        const conflictResolutionFolder = "_fit"
-        const conflictResolutionPath = `${conflictResolutionFolder}/${path}`
-        await this.fit.vaultOps.ensureFolderExists(conflictResolutionPath)
-        await this.fit.vaultOps.writeToLocal(conflictResolutionPath, remoteContent)
-        return {
-            path: conflictResolutionPath,
-            status: "created"
-        }
-
-    }
-
-    async handleUTF8Conflict(path: string, localContent: string, remoteConent: string): Promise<FileOpRecord> {
-        const conflictResolutionFolder = "_fit"
-        const conflictResolutionPath = `${conflictResolutionFolder}/${path}`
-        this.fit.vaultOps.ensureFolderExists(conflictResolutionPath)
-        this.fit.vaultOps.writeToLocal(conflictResolutionPath, remoteConent)
-        return {
-            path: conflictResolutionPath,
-            status: "created"
         }
     }
 
@@ -152,13 +120,15 @@ export class FitSync implements IFitSync {
             const remoteContent = await this.fit.getBlob(latestRemoteFileSha)
             if (removeLineEndingsFromBase64String(remoteContent) !== removeLineEndingsFromBase64String(localFileContent)) {
                 const report = this.generateConflictReport(clash.path, localFileContent, remoteContent)
-                let fileOp: FileOpRecord
-                if (report.resolutionStrategy === "binary") {
-                    fileOp = await this.handleBinaryConflict(clash.path, report.remoteContent)
-                } else {
-                    fileOp = await this.handleUTF8Conflict(clash.path, report.localContent, report.remoteContent)
-                }
-                return {path: clash.path, noDiff: false, fileOp: fileOp}
+				const conflictResolutionFolder = "_fit"
+				const conflictResolutionPath = `${conflictResolutionFolder}/${clash.path}`
+				await this.fit.vaultOps.ensureFolderExists(conflictResolutionPath)
+				await this.fit.vaultOps.writeToLocal(conflictResolutionPath, report.remoteContent)
+				const fileOp: FileOpRecord = {
+					path: conflictResolutionPath,
+					status: "created"
+				}
+                return {path: clash.path, noDiff: false, fileOp}
             }
             return { path: clash.path, noDiff: true }
         } else {

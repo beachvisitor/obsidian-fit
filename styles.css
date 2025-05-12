@@ -203,6 +203,10 @@
     overflow: hidden;
 }
 
+.fit-sync-ribbon-el.animate-icon svg path {
+    display: none;
+}
+
 .fit-sync-ribbon-el.animate-icon::after {
     /* Steps to change color of icon stoke
     1. decode the base64 svg (the string following 'base64, '
